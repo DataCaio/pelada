@@ -6,9 +6,10 @@
     <title>Gestão da Pelada</title>
     <!-- Carrega o Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Importa os ícones da Lucide -->
-    <script type="module" src="https://unpkg.com/lucide-react@0.395.0/dist/umd/lucide-react.js"></script>
-    <script src="https://unpkg.com/lucide-icons@0.395.0"></script>
+    
+    <!-- **** CORREÇÃO 1: Script correto do Lucide (Ícones) **** -->
+    <!-- Carrega o Lucide (versão Javascript puro) -->
+    <script src="https://unpkg.com/lucide@0.395.0/dist/umd/lucide.min.js"></script>
     
     <style>
         /* Estilos do Spinner (Carregador) */
@@ -30,17 +31,17 @@
 <body class="bg-gray-100 font-sans">
 
     <!-- Configuração do Firebase e Módulos -->
+    <!-- **** CORREÇÃO 2: Garantindo que este é o ÚNICO script de módulo **** -->
     <script type="module">
         // Importações do Firebase
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, inMemoryPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, setPersistence, inMemoryPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
             getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, 
             onSnapshot, collection, query, where, Timestamp, setLogLevel
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // --- Configuração Principal ---
-        // Import the functions you need from the SDKs you need
+        /// Import the functions you need from the SDKs you need
         import { initializeApp } from "firebase/app";
         // TODO: Add SDKs for Firebase products that you want to use
         // https://firebase.google.com/docs/web/setup#available-libraries
@@ -64,6 +65,7 @@
         // Coleções do Firestore (usando o caminho PÚBLICO para ser compartilhado)
         const getCollection = (collectionName) => {
             // Caminho simplificado para o modo de produção
+            // (ex: 'mensalistas_novembro', 'caixa_novembro', etc)
             return collection(db, collectionName);
         }
 
@@ -74,6 +76,13 @@
                 setLogLevel('Debug');
                 
                 // Inicializa Firebase
+                // ** Certifique-se que o seu firebaseConfig acima está colado corretamente **
+                if (firebaseConfig.apiKey === "SEU_API_KEY") {
+                    console.error("ERRO: Configure o firebaseConfig!");
+                    document.getElementById('loading-global').innerHTML = '<p class="text-red-500">Erro: O app não foi configurado. Cole o `firebaseConfig` no index.html.</p>';
+                    return;
+                }
+                
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
@@ -266,7 +275,6 @@
             const docId = button.dataset.id;
             const newStatus = button.dataset.status;
             
-            // Caminho simplificado para o modo de produção
             const docRef = doc(db, 'mensalistas_novembro', docId);
             try {
                 await updateDoc(docRef, { status: newStatus });
@@ -374,7 +382,6 @@
             const button = event.currentTarget;
             const docId = button.dataset.id;
             
-            // Caminho simplificado para o modo de produção
             const docRef = doc(db, 'proxima_pelada', docId);
             try {
                 await deleteDoc(docRef);
@@ -395,7 +402,7 @@
                     transacoes.push({ id: doc.id, ...doc.data() });
                 });
                 // Ordenar por data (se houver)
-                transacoes.sort((a, b) => b.data?.seconds - a.data?.seconds);
+                transacoes.sort((a, b) => (b.data?.seconds || 0) - (a.data?.seconds || 0));
                 renderCaixa(transacoes);
             }, (error) => {
                 console.error("Erro ao buscar caixa: ", error);
@@ -450,7 +457,8 @@
             const valor = parseFloat(form.valor.value);
             
             if (!descricao || isNaN(valor) || valor === 0) {
-                alert("Por favor, preencha descrição e valor (diferente de zero).");
+                // Não usar alert()
+                console.warn("Tentativa de submissão de formulário de caixa inválido.");
                 return;
             }
             
@@ -584,7 +592,7 @@
                     
                     <form id="form-add-caixa" class="flex flex-col gap-2 mb-4">
                         <input type="text" name="descricao" placeholder="Descrição (ex: Pagamento, Compra de bolas)" class="p-2 border rounded-lg" required>
-                        <input typeD="number" name="valor" step="0.01" placeholder="Valor (use negativo para saídas, ex: -50.00)" class="p-2 border rounded-lg" required>
+                        <input type="number" name="valor" step="0.01" placeholder="Valor (use negativo para saídas, ex: -50.00)" class="p-2 border rounded-lg" required>
                         <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2">
                             <i data-lucide="save" class="w-4 h-4"></i> Registrar Transação
                         </button>
@@ -621,12 +629,13 @@
         </main>
         
         <footer class="p-4 text-center text-sm text-gray-500 mt-8">
-            App de Gestão da Pelada v2.0
+            App de Gestão da Pelada v2.1
         </footer>
     </div>
     
     <!-- Script para carregar ícones -->
     <script>
+      // Esta chamada é necessária após o script da cabeça ser carregado
       lucide.createIcons();
     </script>
 

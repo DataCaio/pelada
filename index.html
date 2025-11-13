@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestão da Pelada</title>
+    <!-- Carrega o Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Importa os ícones da Lucide -->
+    <script type="module" src="https://unpkg.com/lucide-react@0.395.0/dist/umd/lucide-react.js"></script>
+    <script src="https://unpkg.com/lucide-icons@0.395.0"></script>
+    
+    <style>
+        /* Estilos do Spinner (Carregador) */
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #09f;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        /* Esconde seções inativas */
+        .page-section { display: none; }
+        /* Mostra a seção ativa */
+        .page-section.active { display: block; }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans">
+
+    <!-- Configuração do Firebase e Módulos -->
+    <script type="module">
+        // Importações do Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, inMemoryPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, 
+            onSnapshot, collection, query, where, Timestamp, setLogLevel
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Configuração Principal ---
+        // Import the functions you need from the SDKs you need
+        import { initializeApp } from "firebase/app";
+        // TODO: Add SDKs for Firebase products that you want to use
+        // https://firebase.google.com/docs/web/setup#available-libraries
+
+        // Your web app's Firebase configuration
+        const firebaseConfig = {
+        apiKey: "AIzaSyAVfypZ0PfbOl-ijGoVkkB1MaK4_h-PNUQ",
+        authDomain: "gestaopelada-b0dc4.firebaseapp.com",
+        projectId: "gestaopelada-b0dc4",
+        storageBucket: "gestaopelada-b0dc4.firebasestorage.app",
+        messagingSenderId: "47202082426",
+        appId: "1:47202082426:web:015e4dd73d444f085fa5c3"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+
+        let db, auth;
+        let userId = 'default-user'; // Será atualizado pela autenticação
+        
+        // Coleções do Firestore (usando o caminho PÚBLICO para ser compartilhado)
+        const getCollection = (collectionName) => {
+            // Caminho simplificado para o modo de produção
+            return collection(db, collectionName);
+        }
+
+        // --- Inicialização ---
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                // Habilita logs de debug (útil para desenvolvimento)
+                setLogLevel('Debug');
+                
+                // Inicializa Firebase
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                // Persistência em memória para evitar erros em iframes
+                await setPersistence(auth, inMemoryPersistence);
+
+                // Autenticação
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        console.log("Usuário autenticado:", user.uid);
+                        userId = user.uid;
+                        // Agora que estamos logados, iniciamos os listeners
+                        initializeAppListeners();
+                    } else {
+                        console.log("Usuário não autenticado.");
+                    }
+                });
+
+                // Tenta login anônimo
+                await signInAnonymously(auth);
+
+            } catch (error) {
+                console.error("Erro na inicialização do Firebase:", error);
+                document.getElementById('loading-global').innerHTML = '<p class="text-red-500">Erro ao conectar ao banco de dados.</p>';
+            }
+        });
+
+        // Inicia todos os listeners e a navegação
+        function initializeAppListeners() {
+            initNavigation();
+            
+            // Inicia os listeners de dados em tempo real
+            listenRankingOriginal(); // O ranking antigo da planilha
+            listenMensalistas();
+            listenProximaPelada();
+            listenCaixa();
+
+            // Configura os formulários
+            setupForms();
+            
+            // Esconde o carregamento global e mostra o app
+            document.getElementById('loading-global').style.display = 'none';
+            document.getElementById('app-container').style.display = 'block';
+            
+            // Mostra a página inicial
+            showPage('home');
+        }
+
+        // --- 1. Navegação (SPA) ---
+        function initNavigation() {
+            // Adiciona ícones
+            lucide.createIcons();
+            
+            // Adiciona listeners aos botões de navegação
+            document.querySelectorAll('[data-page]').forEach(button => {
+                button.addEventListener('click', () => {
+                    const pageId = button.getAttribute('data-page');
+                    showPage(pageId);
+                });
+            });
+        }
+
+        function showPage(pageId) {
+            // Esconde todas as seções
+            document.querySelectorAll('.page-section').forEach(section => {
+                section.classList.remove('active');
+            });
+            // Mostra a seção ativa
+            const activePage = document.getElementById(`page-${pageId}`);
+            if (activePage) {
+                activePage.classList.add('active');
+            }
+            // Atualiza o estado visual do menu
+            document.querySelectorAll('[data-page]').forEach(button => {
+                button.classList.remove('bg-gray-700', 'text-white');
+                button.classList.add('text-gray-300', 'hover:bg-gray-700', 'hover:text-white');
+                if (button.getAttribute('data-page') === pageId) {
+                    button.classList.add('bg-gray-700', 'text-white');
+                    button.classList.remove('text-gray-300', 'hover:bg-gray-700', 'hover:text-white');
+                }
+            });
+            console.log(`Navegando para: ${pageId}`);
+        }
+
+        // --- 2. Ranking (Planilha Original) ---
+        async function listenRankingOriginal() {
+            const SHEET_ID = '1m6YSoFTUaNzoLMjLhBejb_GShLI_TBGXrLc97yeqYUw';
+            const GID = '1397719005';
+            const URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${GID}`;
+            
+            const loadingEl = document.getElementById('ranking-loading');
+            const containerEl = document.getElementById('ranking-data');
+            
+            try {
+                const response = await fetch(URL);
+                if (!response.ok) throw new Error('Falha na rede');
+                let text = await response.text();
+                const jsonText = text.substring(text.indexOf('(') + 1, text.lastIndexOf(')'));
+                const data = JSON.parse(jsonText);
+                
+                // Processa os dados e transforma em HTML
+                const headers = data.table.cols.map(col => col.label);
+                const rows = data.table.rows;
+
+                let html = '<table class="min-w-full divide-y divide-gray-200">';
+                html += '<thead class="bg-gray-50">';
+                html += '<tr>';
+                headers.forEach(header => {
+                    html += `<th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">${header}</th>`;
+                });
+                html += '</tr></thead>';
+                html += '<tbody class="bg-white divide-y divide-gray-200">';
+                rows.forEach(row => {
+                    html += '<tr>';
+                    row.c.forEach((cell, index) => {
+                        const value = cell ? cell.v : '';
+                        let extraClasses = (index === 1) ? 'font-medium text-gray-800' : '';
+                        html += `<td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 ${extraClasses}">${value}</td>`;
+                    });
+                    html += '</tr>';
+                });
+                html += '</tbody></table>';
+                
+                containerEl.innerHTML = html;
+                
+            } catch (err) {
+                console.error('Erro ao buscar dados do ranking:', err);
+                containerEl.innerHTML = '<p class="text-red-500">Não foi possível carregar o ranking.</p>';
+            } finally {
+                loadingEl.style.display = 'none';
+            }
+        }
+
+        // --- 3. Mensalistas ---
+        function listenMensalistas() {
+            // Por enquanto, fixo em Novembro como você pediu
+            const collectionRef = getCollection('mensalistas_novembro');
+            
+            onSnapshot(collectionRef, (snapshot) => {
+                const mensalistas = [];
+                snapshot.forEach(doc => {
+                    mensalistas.push({ id: doc.id, ...doc.data() });
+                });
+                renderMensalistas(mensalistas);
+            }, (error) => {
+                console.error("Erro ao buscar mensalistas: ", error);
+                document.getElementById('mensalistas-container').innerHTML = '<p class="text-red-500">Erro ao carregar mensalistas.</p>';
+            });
+        }
+
+        function renderMensalistas(mensalistas) {
+            const container = document.getElementById('mensalistas-container');
+            if (mensalistas.length === 0) {
+                container.innerHTML = '<p class="text-gray-500">Nenhum mensalista cadastrado para Novembro.</p>';
+                return;
+            }
+            
+            let html = '<ul class="divide-y divide-gray-200">';
+            mensalistas.forEach(player => {
+                const isPago = player.status === 'Pago';
+                const statusClass = isPago ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800';
+                
+                html += `
+                    <li class="p-4 flex justify-between items-center">
+                        <span class="font-medium">${player.nome}</span>
+                        <div class="flex items-center gap-2">
+                            <span class="px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${statusClass}">
+                                ${player.status}
+                            </span>
+                            <button data-id="${player.id}" data-status="${isPago ? 'Não' : 'Pago'}" class="toggle-status-btn p-2 rounded-full hover:bg-gray-100">
+                                <i data-lucide="${isPago ? 'rotate-ccw' : 'check'}"></i>
+                            </button>
+                        </div>
+                    </li>
+                `;
+            });
+            html += '</ul>';
+            container.innerHTML = html;
+            
+            // Re-adiciona ícones e listeners
+            lucide.createIcons();
+            document.querySelectorAll('.toggle-status-btn').forEach(button => {
+                button.addEventListener('click', toggleMensalistaStatus);
+            });
+        }
+        
+        async function toggleMensalistaStatus(event) {
+            const button = event.currentTarget;
+            const docId = button.dataset.id;
+            const newStatus = button.dataset.status;
+            
+            // Caminho simplificado para o modo de produção
+            const docRef = doc(db, 'mensalistas_novembro', docId);
+            try {
+                await updateDoc(docRef, { status: newStatus });
+                console.log(`Status do ${docId} atualizado para ${newStatus}`);
+            } catch (error) {
+                console.error("Erro ao atualizar status: ", error);
+            }
+        }
+        
+        async function handleAddMensalista(event) {
+            event.preventDefault();
+            const form = event.target;
+            const nome = form.nome.value.trim();
+            if (!nome) return;
+            
+            const collectionRef = getCollection('mensalistas_novembro');
+            try {
+                await addDoc(collectionRef, {
+                    nome: nome,
+                    status: "Não" // Padrão
+                });
+                console.log(`Mensalista ${nome} adicionado.`);
+                form.reset();
+            } catch (error) {
+                console.error("Erro ao adicionar mensalista: ", error);
+            }
+        }
+
+        // --- 4. Próxima Pelada ---
+        function listenProximaPelada() {
+            const collectionRef = getCollection('proxima_pelada');
+            
+            onSnapshot(collectionRef, (snapshot) => {
+                const jogadores = [];
+                snapshot.forEach(doc => {
+                    jogadores.push({ id: doc.id, ...doc.data() });
+                });
+                renderProximaPelada(jogadores);
+            }, (error) => {
+                console.error("Erro ao buscar próxima pelada: ", error);
+                document.getElementById('proxima-lista').innerHTML = '<p class="text-red-500">Erro ao carregar lista.</p>';
+            });
+        }
+        
+        function renderProximaPelada(jogadores) {
+            const container = document.getElementById('proxima-lista');
+            if (jogadores.length === 0) {
+                container.innerHTML = '<p class="text-gray-500">Ninguém confirmado ainda.</p>';
+                return;
+            }
+            
+            let html = '<ul class="divide-y divide-gray-200">';
+            jogadores.forEach(player => {
+                const tipoClass = player.tipo === 'Mensalista' ? 'text-blue-600' : 'text-orange-600';
+                
+                html += `
+                    <li class="p-4 flex justify-between items-center">
+                        <div>
+                            <span class="font-medium">${player.nome}</span>
+                            <span class="ml-2 text-sm ${tipoClass}">(${player.tipo})</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="font-semibold text-gray-700">R$ ${player.valor.toFixed(2).replace('.', ',')}</span>
+                            <button data-id="${player.id}" class="remove-player-btn p-2 rounded-full text-red-500 hover:bg-red-100">
+                                <i data-lucide="x"></i>
+                            </button>
+                        </div>
+                    </li>
+                `;
+            });
+            html += '</ul>';
+            container.innerHTML = html;
+            
+            // Re-adiciona ícones e listeners
+            lucide.createIcons();
+            document.querySelectorAll('.remove-player-btn').forEach(button => {
+                button.addEventListener('click', removePlayerProxima);
+            });
+        }
+        
+        async function handleAddProxima(event) {
+            event.preventDefault();
+            const form = event.target;
+            const nome = form.nome.value.trim();
+            const tipo = form.tipo.value;
+            if (!nome) return;
+            
+            const valor = (tipo === 'Mensalista') ? 12.25 : 16.00;
+            
+            const collectionRef = getCollection('proxima_pelada');
+            try {
+                await addDoc(collectionRef, {
+                    nome: nome,
+                    tipo: tipo,
+                    valor: valor
+                });
+                console.log(`Jogador ${nome} adicionado à próxima pelada.`);
+                form.reset();
+            } catch (error) {
+                console.error("Erro ao adicionar jogador: ", error);
+            }
+        }
+        
+        async function removePlayerProxima(event) {
+            const button = event.currentTarget;
+            const docId = button.dataset.id;
+            
+            // Caminho simplificado para o modo de produção
+            const docRef = doc(db, 'proxima_pelada', docId);
+            try {
+                await deleteDoc(docRef);
+                console.log(`Jogador ${docId} removido.`);
+            } catch (error) {
+                console.error("Erro ao remover jogador: ", error);
+            }
+        }
+
+        // --- 5. Caixa da Pelada ---
+        function listenCaixa() {
+            // Fixo em Novembro por enquanto
+            const collectionRef = getCollection('caixa_novembro');
+            
+            onSnapshot(collectionRef, (snapshot) => {
+                const transacoes = [];
+                snapshot.forEach(doc => {
+                    transacoes.push({ id: doc.id, ...doc.data() });
+                });
+                // Ordenar por data (se houver)
+                transacoes.sort((a, b) => b.data?.seconds - a.data?.seconds);
+                renderCaixa(transacoes);
+            }, (error) => {
+                console.error("Erro ao buscar caixa: ", error);
+                document.getElementById('caixa-lista').innerHTML = '<p class="text-red-500">Erro ao carregar transações.</p>';
+            });
+        }
+        
+        function renderCaixa(transacoes) {
+            const container = document.getElementById('caixa-lista');
+            const saldoEl = document.getElementById('caixa-saldo');
+            
+            let saldo = 0;
+            let html = '<ul class="divide-y divide-gray-200">';
+            
+            if (transacoes.length === 0) {
+                html = '<p class="text-gray-500">Nenhuma transação registrada em Novembro.</p>';
+            } else {
+                transacoes.forEach(t => {
+                    const isEntrada = t.valor > 0;
+                    const valorClass = isEntrada ? 'text-green-600' : 'text-red-600';
+                    const icon = isEntrada ? 'plus' : 'minus';
+                    
+                    html += `
+                        <li class="p-4 flex justify-between items-center">
+                            <div class="flex items-center gap-3">
+                                <i data-lucide="${icon}" class="${valorClass}"></i>
+                                <span>${t.descricao}</span>
+                            </div>
+                            <span class="font-semibold ${valorClass}">
+                                ${isEntrada ? '+' : ''} R$ ${Math.abs(t.valor).toFixed(2).replace('.', ',')}
+                            </span>
+                        </li>
+                    `;
+                    saldo += t.valor;
+                });
+                html += '</ul>';
+            }
+            
+            container.innerHTML = html;
+            
+            // Atualiza Saldo
+            const saldoClass = saldo >= 0 ? 'text-green-600' : 'text-red-600';
+            saldoEl.innerHTML = `Saldo Final: <span class="font-bold ${saldoClass}">R$ ${saldo.toFixed(2).replace('.', ',')}</span>`;
+            
+            lucide.createIcons();
+        }
+        
+        async function handleAddCaixa(event) {
+            event.preventDefault();
+            const form = event.target;
+            const descricao = form.descricao.value.trim();
+            const valor = parseFloat(form.valor.value);
+            
+            if (!descricao || isNaN(valor) || valor === 0) {
+                alert("Por favor, preencha descrição e valor (diferente de zero).");
+                return;
+            }
+            
+            const collectionRef = getCollection('caixa_novembro');
+            try {
+                await addDoc(collectionRef, {
+                    descricao: descricao,
+                    valor: valor, // O valor já está positivo ou negativo
+                    data: Timestamp.now()
+                });
+                console.log(`Transação ${descricao} adicionada.`);
+                form.reset();
+            } catch (error) {
+                console.error("Erro ao adicionar transação: ", error);
+            }
+        }
+        
+        // --- Configuração dos Formulários ---
+        function setupForms() {
+            document.getElementById('form-add-mensalista').addEventListener('submit', handleAddMensalista);
+            document.getElementById('form-add-proxima').addEventListener('submit', handleAddProxima);
+            document.getElementById('form-add-caixa').addEventListener('submit', handleAddCaixa);
+        }
+
+    </script>
+
+    <!-- Indicador de Carregamento Global -->
+    <div id="loading-global" class="flex items-center justify-center h-screen">
+        <div class="flex flex-col items-center">
+            <div class="spinner"></div>
+            <p class="mt-4 text-gray-600">Conectando ao app da pelada...</p>
+        </div>
+    </div>
+
+    <!-- Container Principal do App (inicia escondido) -->
+    <div id="app-container" style="display: none;">
+        
+        <header class="bg-gray-800 text-white shadow-md">
+            <div class="max-w-4xl mx-auto p-4 flex justify-between items-center">
+                <h1 class="text-xl md:text-2xl font-bold">Gestão da Pelada ⚽</h1>
+            </div>
+            <!-- Menu de Navegação -->
+            <nav class="bg-gray-700">
+                <div class="max-w-4xl mx-auto flex flex-wrap justify-center md:justify-start">
+                    <button data-page="home" class="flex items-center gap-2 px-4 py-3 text-sm font-medium">
+                        <i data-lucide="home" class="w-4 h-4"></i> Início
+                    </button>
+                    <button data-page="mensalistas" class="flex items-center gap-2 px-4 py-3 text-sm font-medium">
+                        <i data-lucide="users" class="w-4 h-4"></i> Mensalistas
+                    </button>
+                    <button data-page="proxima" class="flex items-center gap-2 px-4 py-3 text-sm font-medium">
+                        <i data-lucide="calendar-plus" class="w-4 h-4"></i> Próxima Pelada
+                    </button>
+                    <button data-page="caixa" class="flex items-center gap-2 px-4 py-3 text-sm font-medium">
+                        <i data-lucide="piggy-bank" class="w-4 h-4"></i> Caixa
+                    </button>
+                    <button data-page="ranking" class="flex items-center gap-2 px-4 py-3 text-sm font-medium">
+                        <i data-lucide="bar-chart-3" class="w-4 h-4"></i> Ranking (Planilha)
+                    </button>
+                </div>
+            </nav>
+        </header>
+
+        <main class="max-w-4xl mx-auto p-4 md:p-6">
+
+            <!-- ========= SEÇÃO 0: INÍCIO ========= -->
+            <section id="page-home" class="page-section active">
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <h2 class="text-2xl font-bold mb-4">Bem-vindo à Gestão da Pelada!</h2>
+                    <p class="text-gray-700">
+                        Use o menu acima para navegar entre as seções. Você pode gerenciar os
+                        pagamentos dos mensalistas, confirmar quem vai na próxima pelada, e
+                        controlar o caixa do time.
+                    </p>
+                    <p class="mt-4 text-sm text-gray-500">
+                        Todos os dados são salvos em tempo real e compartilhados com quem tiver acesso a esta página.
+                    </p>
+                </div>
+            </section>
+
+            <!-- ========= SEÇÃO 1: MENSALISTAS ========= -->
+            <section id="page-mensalistas" class="page-section space-y-6">
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <h2 class="text-2xl font-bold mb-4">Mensalistas - Novembro</h2>
+                    
+                    <form id="form-add-mensalista" class="flex gap-2 mb-4">
+                        <input type="text" name="nome" placeholder="Nome do mensalista" class="flex-grow p-2 border rounded-lg" required>
+                        <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center gap-2">
+                            <i data-lucide="plus" class="w-4 h-4"></i> Adicionar
+                        </button>
+                    </form>
+                </div>
+                
+                <div class="bg-white rounded-lg shadow overflow-hidden">
+                    <div id="mensalistas-container" class="p-4">
+                        <!-- Lista de mensalistas será renderizada aqui -->
+                        <p>Carregando mensalistas...</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========= SEÇÃO 2: PRÓXIMA PELADA ========= -->
+            <section id="page-proxima" class="page-section space-y-6">
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <h2 class="text-2xl font-bold mb-4">Próxima Pelada</h2>
+                    
+                    <form id="form-add-proxima" class="grid grid-cols-1 md:grid-cols-3 gap-2 mb-4">
+                        <input type="text" name="nome" placeholder="Nome do jogador" class="md:col-span-2 p-2 border rounded-lg" required>
+                        <select name="tipo" class="p-2 border rounded-lg bg-white">
+                            <option value="Mensalista">Mensalista (R$ 12,25)</option>
+                            <option value="Avulso">Avulso (R$ 16,00)</option>
+                        </select>
+                        <button type="submit" class="md:col-span-3 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2">
+                            <i data-lucide="plus" class="w-4 h-4"></i> Confirmar Presença
+                        </button>
+                    </form>
+                </div>
+                
+                <div class="bg-white rounded-lg shadow overflow-hidden">
+                    <div id="proxima-lista" class="p-4">
+                        <!-- Lista de jogadores será renderizada aqui -->
+                        <p>Carregando lista...</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========= SEÇÃO 3: CAIXA DA PELADA ========= -->
+            <section id="page-caixa" class="page-section space-y-6">
+                <div class="bg-white p-6 rounded-lg shadow">
+                    <h2 class="text-2xl font-bold mb-4">Caixa - Novembro</h2>
+                    
+                    <form id="form-add-caixa" class="flex flex-col gap-2 mb-4">
+                        <input type="text" name="descricao" placeholder="Descrição (ex: Pagamento, Compra de bolas)" class="p-2 border rounded-lg" required>
+                        <input typeD="number" name="valor" step="0.01" placeholder="Valor (use negativo para saídas, ex: -50.00)" class="p-2 border rounded-lg" required>
+                        <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2">
+                            <i data-lucide="save" class="w-4 h-4"></i> Registrar Transação
+                        </button>
+                    </form>
+                </div>
+                
+                <div class="bg-white rounded-lg shadow overflow-hidden">
+                    <div class="p-4 border-b">
+                        <h3 id="caixa-saldo" class="text-xl font-semibold text-gray-800">Saldo Final: R$ 0,00</h3>
+                    </div>
+                    <div id="caixa-lista" class="p-4">
+                        <!-- Lista de transações será renderizada aqui -->
+                        <p>Carregando transações...</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========= SEÇÃO 4: RANKING (PLANILHA) ========= -->
+            <section id="page-ranking" class="page-section">
+                <div class="bg-white rounded-lg shadow overflow-hidden">
+                    <header class="p-6">
+                        <h2 class="text-2xl font-bold">Ranking da Pelada (Planilha)</h2>
+                        <p class="text-gray-600">Dados lidos diretamente da planilha Google.</p>
+                    </header>
+                    <div id="ranking-loading" class="flex justify-center p-10">
+                        <div class="spinner"></div>
+                    </div>
+                    <div id="ranking-data" class="overflow-x-auto">
+                        <!-- Tabela do ranking original será injetada aqui -->
+                    </div>
+                </div>
+            </section>
+
+        </main>
+        
+        <footer class="p-4 text-center text-sm text-gray-500 mt-8">
+            App de Gestão da Pelada v2.0
+        </footer>
+    </div>
+    
+    <!-- Script para carregar ícones -->
+    <script>
+      lucide.createIcons();
+    </script>
+
+</body>
+</html>
